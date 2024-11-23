@@ -1,16 +1,6 @@
-"""
--------------------------------------------------------------------------------------
-Telegram API Helpers
 
-Functions to help parse and transform the Telegram API responses.
-
-: zach.wolpe@medibio.com.au
-: 20:09:2024
--------------------------------------------------------------------------------------
-"""
-from query_gemini import query_gemini_api, generate_system_prompt
+from query_chatgpt import  generate_system_prompt,query_chatgpt_api
 import telegramify_markdown
-# from telegramify_markdown import customize
 from pprint import pprint
 import numpy as np
 import requests
@@ -22,38 +12,33 @@ class BotConfig:
     PARSE_MODE = 'MarkdownV2'
     SPECIAL_CHARS = ['\\', '_', '*', '[', ']', '(', ')', '~', '`', '>', '<', '&', '#', '+', '-', '=', '|', '{', '}', '.', '!']
 
-
 class BotMessages:
-    TRAVEL_KEY = '/tour'
-    helper_message = f"Please provide a location argument after /travel <arg> to form a valid query. For example: \n  \'{TRAVEL_KEY} Harajuku\'."
-    location_not_provided_error = f"Please provide a location argument after /travel <arg> to form a valid query. For example: \n  \'{TRAVEL_KEY} Harajuku\'."
+    LEARN_KEY = '/learn'
+    helper_message = (
+        "Available commands:\n"
+        "- /learn [topic]: Get general language tips on any topic.\n"
+        "- /diseases [topic]: Get disease-related vocabulary and explanations.\n"
+        "- /anatomy [topic]: Learn anatomy vocabulary.\n"
+        "- /pharma [topic]: Explore pharmacology terms.\n"
+        "- /symptoms [topic]: Understand common symptom terminology."
+    )    
+    anatomy_error = "Please provide a topic after /anatomy. For example: '/anatomy heart'."
+    pharma_error = "Please provide a topic after /pharma. For example: '/pharma antibiotics'."
+    symptoms_error = "Please provide a topic after /symptoms. For example: '/symptoms fever'."
+    diseases_error = "Please provide a topic after /diseases. For example: '/diseases diabetes'."
+    topic_not_provided_error = f"Please provide a topic after {LEARN_KEY}. For example: '{LEARN_KEY} greetings'."
     about_message = """
-    -------------------------------------------------------------------------------------
-    About TourGuide77Bot
-    ---------------------
+        *Georgian Language Bot*
 
-    I exist to kickstart any travel journey, ask me about any city and I'll give you the lowdown on the best places to visit, eat, and explore.
-
-    More advanced features coming soon...
-
-    : author        : zach wolpe
-    : email         : zach.wolpe@medibio.com.au
-    : release date  : 27 Sep 2024
-    -------------------------------------------------------------------------------------
-    """
-    start_message = """
-        Hello! I am TourGuide77Bot - your personal tour guide. I can help you with your travel plans. \n{}.
-        """.format(helper_message)
-    random_response_1 = f"404 not found! Try asking for {TRAVEL_KEY}..."
-    random_response_2 = "Hmmm not sure what you want..."
-    random_response_3 = "I'm sorry, I don't understand that command. Please type /help to get started."
-    random_response_4 = """                                                                         \n
-         _  _    ___  _  _     _   _       _     _____                     _                        \n   
-        | || |  / _ \| || |   | \ | | ___ | |_  |  ___|__  _   _ _ __   __| |                       \n
-        | || |_| | | | || |_  |  \| |/ _ \| __| | |_ / _ \| | | | '_ \ / _` |                       \n
-        |__   _| |_| |__   _| | |\  | (_) | |_  |  _| (_) | |_| | | | | (_| |_ _ _ _                \n
-           |_|  \___/   |_|   |_| \_|\___/ \__| |_|  \___/ \__,_|_| |_|\__,_(_|_|_|_)               \n
-        """
+        GeorgianLanguageBot is designed to assist users in learning Georgian, with a focus on medical vocabulary and terminology for healthcare students."""
+    start_message = (
+        "Welcome to GeorgianLanguageBot! I'm here to help you learn Georgian.\n"
+        "Type /help to see available commands and get started."
+    )
+    random_response_1 = "I'm not sure what you're asking. Try typing /help."
+    random_response_2 = "Oops, I didn’t understand that. Type /help for assistance."
+    random_response_3 = "I’m here to help you with Georgian language basics. Type /help to learn more."
+    random_response_4 = "Hmmm, I couldn’t quite understand. Type /help for guidance."
 
     @staticmethod
     def sample_random_response():
@@ -113,75 +98,101 @@ def write_response_to_text_file(text_response: str, filename: str = 'response.tx
     with open(filename, 'w') as f:
         f.write(text_response)
 
-
 def send_message(chat_id, text, BOT_API_TOKEN):
     url = f"https://api.telegram.org/bot{BOT_API_TOKEN}/sendMessage"
 
+    # Ensure text encoding is UTF-8 compliant
     text = telegramify_markdown.markdownify(
         text,
-        max_line_length=None,  # If you want to change the max line length for links, images, set it to the desired value.
+        max_line_length=None,
         normalize_whitespace=False
-    )
+    ).encode('utf-8', 'ignore').decode('utf-8')  # Encode and decode as UTF-8 to handle special characters
+
     payload = {
         "chat_id": chat_id,
         "text": text,
         "parse_mode": BotConfig.PARSE_MODE
     }
-    print(f'Sending message (chat_id:{chat_id}) : payload : ')
-    pprint(payload)
+    logging.info(f"Sending message (chat_id:{chat_id}) : payload : {payload}")
     response = requests.post(url, json=payload)
     return response.json()
 
 
-def bot_query_gemini_api(text: str):
+def bot_query_chatgpt_api(text: str) -> str:
+    # Remove the command part (`/learn`) from the text to get the topic
+    topic = text.replace(BotMessages.LEARN_KEY, '').strip()
 
-    text = text.replace(BotMessages.TRAVEL_KEY, '').strip()
+    # Check if a topic was provided; if not, return an error message
+    if not topic:
+        return BotMessages.topic_not_provided_error
 
-    if not text:
-        return BotMessages.location_not_provided_error
+    # Generate the system prompt based on the topic
+    prompt = generate_system_prompt(topic)
+    logging.info(f"Generated system prompt for topic '{topic}': {prompt}")
 
-    system_prompt = generate_system_prompt(text)  # generate system prompt
-    text_response = query_gemini_api(system_prompt, _process_links=True)  # query gemini api
-
-    # write to file
-    # write_response_to_text_file(text_response, 'response.txt')
-
-    return text_response
-
+    # Query ChatGPT-4 with the generated prompt
+    response = query_chatgpt_api(prompt)
+    
+    return response
 
 class BotCommands:
     message_handler_map = {
         '/start': BotMessages.start_message,
         '/help': BotMessages.helper_message,
-        '/h': BotMessages.helper_message,
-        '/?': BotMessages.helper_message,
         '/about': BotMessages.about_message,
-        BotMessages.TRAVEL_KEY: bot_query_gemini_api,
+        # BotMessages.LEARN_KEY: bot_query_chatgpt_api, 
+        # New function to query ChatGPT-4
+        # '/learn': bot_query_chatgpt_api       
+        '/anatomy': lambda: bot_query_chatgpt_api(generate_system_prompt("anatomy")),
+        '/pharma': lambda: bot_query_chatgpt_api(generate_system_prompt("pharmacology")),
+        '/symptoms': lambda: bot_query_chatgpt_api(generate_system_prompt("symptoms")),
+        '/diseases': lambda: bot_query_chatgpt_api(generate_system_prompt("diseases")),  # Directly map '/learn' to the function
+        '/learn': bot_query_chatgpt_api,  # Ensure this function exists and is correctly set up
+
     }
 
-
 def handle_message(chat_id, text, BOT_API_TOKEN):
-    """
-    Handle incoming messages from the Telegram API.
-    """
+    # Extract the command keyword (first word)
+    command, *args = text.strip().split(' ')
+    command = command.lower()
+    topic = ' '.join(args).strip()
 
-    # map message to response
-    start_of_message = text.lower().strip().split(' ')[0]
+    # Define a dictionary to map commands to error messages for missing topics
+    topic_required_commands = {
+        '/anatomy': BotMessages.anatomy_error,
+        '/pharma': BotMessages.pharma_error,
+        '/symptoms': BotMessages.symptoms_error,
+        '/diseases': BotMessages.diseases_error,
+    }
 
-    return_message = BotCommands.message_handler_map.get(start_of_message, BotMessages.sample_random_response())
+    # Check if the command is in the list of commands requiring a topic
+    if command in topic_required_commands:
+        # If topic is missing, send the appropriate error message
+        if not topic:
+            send_message(chat_id, topic_required_commands[command], BOT_API_TOKEN)
+            return True
+        
+        # If topic is provided, generate the response for the specific command
+        response_message = bot_query_chatgpt_api(f"{command} {topic}")
 
-    print('> recevied:         ', text)
-    print('> return_message:   ', return_message)
+    elif command == BotMessages.LEARN_KEY:
+        # Handle `/learn <topic>` as before
+        if not topic:
+            send_message(chat_id, BotMessages.topic_not_provided_error, BOT_API_TOKEN)
+            return True
+        response_message = bot_query_chatgpt_api(f"{BotMessages.LEARN_KEY} {topic}")
 
-    # return
-    if not isinstance(return_message, str):
-        text_response = return_message(text)
+    elif command in BotCommands.message_handler_map:
+        # Handle other commands as before
+        response = BotCommands.message_handler_map[command]
+        response_message = response() if callable(response) else response
 
-        # send messages in chucks to avoide exceeding the Telegram API limit
-        for _i, _msg in chunk_response(text_response):
-            send_message(chat_id, _msg, BOT_API_TOKEN)
+    else:
+        # Fallback to random response if command is unrecognized
+        response_message = BotMessages.sample_random_response()
 
-        return True
+    # Send the response message in chunks if needed
+    for _, msg_chunk in chunk_response(response_message):
+        send_message(chat_id, msg_chunk, BOT_API_TOKEN)
 
-    send_message(chat_id, return_message, BOT_API_TOKEN)
     return True
